@@ -55,6 +55,8 @@ class TaskOffloading(BaseScenario):
         for agent in world.agents:
             agent.gain = 0
             agent.remain_task = 0
+            agent.acc_sum = 0
+            # TODO: 补充
 
     def reward(self, agent, world):
         # TODO: implement reward
