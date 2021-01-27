@@ -1,15 +1,6 @@
 import random
 from environment.core import World, BranchyModel, Service, Agent, BaseStation
 
-class BaseScenario:
-    # create elements of the world
-    def make_world(self):
-        raise NotImplementedError()
-
-    # create initial conditions of the world
-    def reset_world(self):
-        raise NotImplementedError()
-
 
 # TODO: temp value
 # branchy DNN model info
@@ -30,7 +21,10 @@ BS_ABILITY = 100000
 TIME_SLOT_DURATION = 1
 
 
-class TaskOffloading(BaseScenario):
+class TaskOffloading():
+    def __init__(self):
+        self.world = None
+
     def make_world(self):
         # branchy model
         branchy_model = BranchyModel(COMP_INTENSITY, ACC_TABLE, INPUT_SIZE)
@@ -49,18 +43,13 @@ class TaskOffloading(BaseScenario):
         world = World(agents, bs)
         # initialize world
         self.reset_world(world)
-        return world
 
-    def reset_world(self, world):
+    def reset_world(self, world: World):
         for agent in world.agents:
-            agent.gain = 0
-            agent.remain_task = 0
-            agent.acc_sum = 0
-            agent.generate_task()
-            agent.trans_rate = 0
-            # TODO: 补充
+            agent.reset()
         world.update_agents_states()
+        world.bs.reset()
 
-    def reward(self, agent, world):
+    def reward(self, agent: Agent, world: World):
         # TODO: implement reward
         raise NotImplementedError()
