@@ -35,7 +35,7 @@ class TaskOffloading(BaseScenario):
         # branchy model
         branchy_model = BranchyModel(COMP_INTENSITY, ACC_TABLE, INPUT_SIZE)
         # TODO: a fixed service now
-        service = Service(branchy_model, MAX_WAIT_TIME)
+        service = Service("service 1", branchy_model, MAX_WAIT_TIME, ACC_LIMIT)
         # add agents
         agents = []
         for i in range(AGENT_NUMBER):
@@ -56,7 +56,10 @@ class TaskOffloading(BaseScenario):
             agent.gain = 0
             agent.remain_task = 0
             agent.acc_sum = 0
+            agent.generate_task()
+            agent.trans_rate = 0
             # TODO: 补充
+        world.update_agents_states()
 
     def reward(self, agent, world):
         # TODO: implement reward
