@@ -2,10 +2,27 @@ import random
 import math
 import numpy as np
 
+from environment.hyperParameters import DROP_PENALTY, RHO
+
+
+# branchy style DNN model
+class BranchyModel:
+    def __init__(self, comp_intensities, accuracy, input_data):
+        """
+        Args:
+            comp_intensities:  computation intensities(total cycles / input data size) for each branches
+            accuracy: accuracy table of all branches
+            input_data: input data size(bits)
+        """
+        self.branches_num = len(comp_intensities)
+        self.comp_intensities = comp_intensities
+        self.accuracy = accuracy
+        self.input_data = input_data
+
 
 # DNN inference service
 class Service:
-    def __init__(self, name, branchy_model, max_wait_time, accuracy_limit):
+    def __init__(self, name, branchy_model: BranchyModel, max_wait_time, accuracy_limit):
         self.name = name
         self.branchy_model = branchy_model
         self.max_wait_time = max_wait_time
@@ -43,7 +60,7 @@ class Entity:
 
 # IoT device
 class Agent(Entity):
-    def __init__(self, comp_ability: int, service: Service, task_lam=1):
+    def __init__(self, comp_ability: int, service: Service, task_lam=1, drop_penalty=DROP_PENALTY, rho=RHO):
         """
         initialize Agent class
         Args:
@@ -69,6 +86,10 @@ class Agent(Entity):
         self.is_dropped = False
         # Estimated latency of tasks execution when agent adopts current action
         self.latency = 0
+        # penalty time for dropping tasks
+        self.drop_penalty = drop_penalty
+        # adjust the importance of accuracy
+        self.rho = rho
 
     def reset(self):
         self.channel_gain_id = 1
@@ -78,7 +99,6 @@ class Agent(Entity):
         self.action = None
         self.latency = 0
         self.is_dropped = False
-        self.generate_task()
 
     def generate_task(self):
         """
@@ -170,21 +190,6 @@ class BaseStation(Entity):
         return is_dropped, latency_list
 
 
-# branchy style DNN model
-class BranchyModel:
-    def __init__(self, comp_intensities, accuracy, input_data):
-        """
-        Args:
-            comp_intensities:  computation intensities(total cycles / input data size) for each branches
-            accuracy: accuracy table of all branches
-            input_data: input data size(bits)
-        """
-        self.branches_num = len(comp_intensities)
-        self.comp_intensities = comp_intensities
-        self.accuracy = accuracy
-        self.input_data = input_data
-
-
 class World:
     def __init__(self, agents, bs: BaseStation, duration: int):
         self.agents = agents
@@ -200,6 +205,8 @@ class World:
         self.tran_power = 0.1
         # bandwidth of subchannels
         self.bandwidth = 5
+        # cumulative reward
+        self.reward = 0
 
     def step(self):
         """
@@ -230,8 +237,13 @@ class World:
             self.agents[i].latency += latency[i]
 
     def update_agents_states(self):
+        self.update_agents_tasks()
         self.update_channel_gain()
         self.update_trans_rate()
+
+    def update_agents_tasks(self):
+        for agent in self.agents:
+            agent.generate_task()
 
     def update_channel_gain(self):
         """
