@@ -11,7 +11,6 @@ import tensorflow.contrib.layers as layers
 def parse_args():
     parser = argparse.ArgumentParser("Reinforcement Learning experiments for multiagent environments")
     # Environment
-    parser.add_argument("--scenario", type=str, default="simple", help="name of the scenario script")
     parser.add_argument("--max-episode-len", type=int, default=25, help="maximum episode length")
     parser.add_argument("--num-episodes", type=int, default=60000, help="number of episodes")
     parser.add_argument("--num-adversaries", type=int, default=0, help="number of adversaries")
@@ -45,12 +44,10 @@ def mlp_model(input, num_outputs, scope, reuse=False, num_units=64, rnn_cell=Non
         out = layers.fully_connected(out, num_outputs=num_outputs, activation_fn=None)
         return out
 
-def make_env(scenario_name, arglist, benchmark=False):
-    from multiagent.environment import MultiAgentEnv
-    import multiagent.scenarios as scenarios
+def make_env(arglist, benchmark=False):
+    from environment import scenario
+    from environment.environment import MultiAgentEnv
 
-    # load scenario from script
-    scenario = scenarios.load(scenario_name + ".py").Scenario()
     # create world
     world = scenario.make_world()
     # create multiagent environment
@@ -78,7 +75,7 @@ def get_trainers(env, num_adversaries, obs_shape_n, arglist):
 def train(arglist):
     with U.single_threaded_session():
         # Create environment
-        env = make_env(arglist.scenario, arglist, arglist.benchmark)
+        env = make_env(arglist, arglist.benchmark)
         # Create agent trainers
         obs_shape_n = [env.observation_space[i].shape for i in range(env.n)]
         num_adversaries = min(env.n, arglist.num_adversaries)

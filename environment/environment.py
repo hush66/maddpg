@@ -45,6 +45,7 @@ class MultiAgentEnv(gym.Env):
         # get reward
         reward = self._get_reward()
         reward_n = [reward] * self.n  # all agents get total reward in cooperative case
+        self.time_slot += 1
         return obs_n, reward_n, done_n, info_n
 
     def reset(self):
