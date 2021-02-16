@@ -1,6 +1,7 @@
 import random
 import math
 import numpy as np
+import tensorflow as tf
 
 from environment.hyperParameters import DROP_PENALTY, RHO
 
@@ -51,16 +52,17 @@ class Entity:
             duration: duration of each time slot
 
         Returns: None
-
         """
+        #print(self.name, " remain task before: ", self.remain_task)
         self.remain_task -= duration * self.comp_ability
+        #print(self.name, " remain task after: ", self.remain_task)
         if self.remain_task < 0:
             self.remain_task = 0
 
 
 # IoT device
 class Agent(Entity):
-    def __init__(self, comp_ability: int, service: Service, task_lam=1, drop_penalty=DROP_PENALTY, rho=RHO):
+    def __init__(self, comp_ability: int, service: Service, task_lam=2, drop_penalty=DROP_PENALTY, rho=RHO):
         """
         initialize Agent class
         Args:
@@ -68,10 +70,9 @@ class Agent(Entity):
             service: DNN inference service
             task_lam: lambda variable for poisson distribution of task arrival
         """
-        super(Agent, self).__init__(comp_ability)
+        super(Agent, self).__init__(comp_ability, service)
         # channel gain
         self.task_lam = task_lam
-        self.service = service
         # discrete action
         self.action = None
         # accuracy sum is used to calculate average accuracy
@@ -83,7 +84,7 @@ class Agent(Entity):
         # transmission rate between agent and BS
         self.trans_rate = 0
         # a boolean variable that indicates whether agent would drop tasks when adopts current action
-        self.is_dropped = False
+        #self.is_dropped = False
         # Estimated latency of tasks execution when agent adopts current action
         self.latency = 0
         # penalty time for dropping tasks
@@ -98,7 +99,6 @@ class Agent(Entity):
         self.trans_rate = 0
         self.action = None
         self.latency = 0
-        self.is_dropped = False
 
     def generate_task(self):
         """
@@ -106,6 +106,8 @@ class Agent(Entity):
         Returns: None
         """
         self.arrived_tasks = np.random.poisson(lam=self.task_lam, size=1)[0]
+        if self.arrived_tasks == 0:
+            self.generate_task()
 
     def is_offloaded(self):
         """
@@ -113,7 +115,7 @@ class Agent(Entity):
         Returns: a boolean var that indicates whether agent offload task to base station
         """
         b_model = self.service.branchy_model
-        return self.action == b_model.branches_num
+        return self.action.eval() == b_model.branches_num
 
     def policy_action(self):
         """
@@ -121,11 +123,10 @@ class Agent(Entity):
         Returns: None
         """
         b_model = self.service.branchy_model
-        self.is_dropped = False
         self.latency = 0
-        if self.is_offloaded():
+        if not self.is_offloaded():
             # execute locally
-            branch_id = self.action  # action indicates the chosen branch id
+            branch_id = self.action.eval()  # action indicates the chosen branch id
             comp_intensity = b_model.comp_intensities[branch_id]  # chosen branch's computation intensity
             accuracy = b_model.accuracy[branch_id]  # chosen branch's accuracy
             # update acc_sum
@@ -133,11 +134,12 @@ class Agent(Entity):
             # update task queue
             needed_cycles = comp_intensity * b_model.input_data  # needed cpu cycles for per task
             for _ in range(self.arrived_tasks):
-                self.latency = self.remain_task + needed_cycles / self.comp_ability
+                self.latency = (self.remain_task + needed_cycles) / self.comp_ability
                 # if arriving task's wait time is bigger than max wait time then drop it
+                # TODO: something wrong?
                 if self.latency > self.service.max_wait_time:
-                    self.is_dropped = True
-                    break
+                    # drop penalty
+                    self.latency += self.drop_penalty
                 else:
                     self.remain_task += needed_cycles
         else:
@@ -149,7 +151,7 @@ class Agent(Entity):
 class BaseStation(Entity):
     def __init__(self, comp_ability: int, service: Service):
         super(BaseStation, self).__init__(comp_ability, service)
-        super(BaseStation, self).name = 'Base Station'
+        self.name = 'Base Station'
 
     def reset(self):
         self.remain_task = 0
@@ -161,10 +163,8 @@ class BaseStation(Entity):
             tasks_num: a list show the offloaded task number of each agents
             upload_rates: a list show the upload rates(bits/s) for each agents
         Returns:
-            is_dropped: a boolean var list that shows weather tasks are dropped
             latency_list: a list for latency of each agents
         """
-        is_dropped = []
         latency_list = []
         agents_num = len(tasks_num)
         pre_remain_task = self.remain_task
@@ -173,7 +173,6 @@ class BaseStation(Entity):
         for i in range(agents_num):
             # for agent i
             if tasks_num[i] == 0:
-                is_dropped.append(False)
                 latency_list.append(0)
                 continue  # execute locally
             data_size = tasks_num[i] * self.service.branchy_model.input_data
@@ -182,12 +181,11 @@ class BaseStation(Entity):
             accumulate_queue_time = pre_remain_task / self.comp_ability
             cur_avg_wait_time = data_size_sum * self.service.base_model_ci / (2 * self.comp_ability)
             latency = upload_time + execute_time + accumulate_queue_time + cur_avg_wait_time
-            latency_list.append(latency)
+            #print("bs: ", upload_time, execute_time, accumulate_queue_time, cur_avg_wait_time)
             if latency > self.service.max_wait_time:
-                is_dropped.append(True)
-            else:
-                is_dropped.append(False)
-        return is_dropped, latency_list
+                latency += DROP_PENALTY
+            latency_list.append(latency)
+        return latency_list
 
 
 class World:
@@ -203,10 +201,8 @@ class World:
         self.white_noise = pow(10, -13)
         # transmit power 20dBm=100mW=0.1W
         self.tran_power = 0.1
-        # bandwidth of subchannels
-        self.bandwidth = 5
-        # cumulative reward
-        self.reward = 0
+        # bandwidth of subchannels MHz
+        self.bandwidth = 5 * math.pow(10, 6)
 
     def step(self):
         """
@@ -228,13 +224,13 @@ class World:
             # Execute tasks in agent's waiting queue
             agent.scripted_action(self.duration)
         # Execute tasks in base station's waiting queue
-        is_dropped, latency = self.bs.policy_action(tasks_to_bs, update_rates)
+        latency = self.bs.policy_action(tasks_to_bs, update_rates)
         self.bs.scripted_action(self.duration)
         # union info
-        assert len(is_dropped) == len(latency) == len(self.agents)
-        for i in range(len(is_dropped)):
-            self.agents[i].is_dropped |= is_dropped[i]
+        assert len(latency) == len(self.agents)
+        for i in range(len(latency)):
             self.agents[i].latency += latency[i]
+        self.update_agents_states()
 
     def update_agents_states(self):
         self.update_agents_tasks()

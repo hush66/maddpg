@@ -1,5 +1,6 @@
 import gym
 import numpy as np
+import tensorflow as tf
 from gym import spaces
 
 
@@ -34,7 +35,7 @@ class MultiAgentEnv(gym.Env):
         info_n = {'n': []}
         # set action for each agent
         for i, agent in enumerate(self.agents):
-            agent.action = action_n[i]
+            agent.action = tf.argmax(action_n[i])
         # update world state
         self.world.step()
         # record observation for each agent
@@ -49,6 +50,11 @@ class MultiAgentEnv(gym.Env):
         return obs_n, reward_n, done_n, info_n
 
     def reset(self):
+        for agent in self.agents:
+            if agent.action is not None:
+                print(agent.name, " latency: ", agent.latency, " action: ", agent.action.eval(), " accuracy: ", agent.acc_sum/self.time_slot, " remain_task: ", agent.remain_task)
+        print("base station: ", self.world.bs.remain_task)
+        self.time_slot = 0
         # reset world
         self.reset_func(self.world)
         # record initial observations for each agent

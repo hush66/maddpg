@@ -183,7 +183,7 @@ class SoftCategoricalPd(Pd):
         return self.logits
     def mode(self):
         return U.softmax(self.logits, axis=-1)
-    def logp(self, x):
+    def logp(self, x):  # 输出softmax（输入tensor）
         return -tf.nn.softmax_cross_entropy_with_logits(logits=self.logits, labels=x)
     def kl(self, other):
         a0 = self.logits - U.max(self.logits, axis=1, keepdims=True)
