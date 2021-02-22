@@ -53,7 +53,7 @@ class MultiAgentEnv(gym.Env):
         for agent in self.agents:
             if agent.action is not None:
                 print(agent.name, " latency: ", agent.latency, " action: ", agent.action.eval(), " accuracy: ", agent.acc_sum/self.time_slot, " remain_task: ", agent.remain_task)
-        print("base station: ", self.world.bs.remain_task)
+        print("base station: ", self.world.bs.remain_task, "util_rate: ", self.world.bs.utilization_rate)
         self.time_slot = 0
         # reset world
         self.reset_func(self.world)

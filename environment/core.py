@@ -3,7 +3,7 @@ import math
 import numpy as np
 import tensorflow as tf
 
-from environment.hyperParameters import DROP_PENALTY, RHO
+from environment.hyperParameters import DROP_PENALTY, RHO, DURATION
 
 
 # branchy style DNN model
@@ -91,6 +91,8 @@ class Agent(Entity):
         self.drop_penalty = drop_penalty
         # adjust the importance of accuracy
         self.rho = rho
+        # variable to indicate whether any tasks are dropped during execution
+        self.is_dropped = 0
 
     def reset(self):
         self.channel_gain_id = 1
@@ -99,6 +101,7 @@ class Agent(Entity):
         self.trans_rate = 0
         self.action = None
         self.latency = 0
+        self.is_dropped = 0
 
     def generate_task(self):
         """
@@ -123,7 +126,7 @@ class Agent(Entity):
         Returns: None
         """
         b_model = self.service.branchy_model
-        self.latency = 0
+        self.latency, self.is_dropped = 0, 0
         if not self.is_offloaded():
             # execute locally
             branch_id = self.action.eval()  # action indicates the chosen branch id
@@ -136,15 +139,14 @@ class Agent(Entity):
             for _ in range(self.arrived_tasks):
                 self.latency = (self.remain_task + needed_cycles) / self.comp_ability
                 # if arriving task's wait time is bigger than max wait time then drop it
-                # TODO: something wrong?
                 if self.latency > self.service.max_wait_time:
-                    # drop penalty
-                    self.latency += self.drop_penalty
+                    self.is_dropped = 1
                 else:
                     self.remain_task += needed_cycles
         else:
             # offload to bs
             self.acc_sum += self.service.base_model_acc
+        #print(self.name, "remain_task: ", self.remain_task)
 
 
 # 5G base station
@@ -152,9 +154,11 @@ class BaseStation(Entity):
     def __init__(self, comp_ability: int, service: Service):
         super(BaseStation, self).__init__(comp_ability, service)
         self.name = 'Base Station'
+        self.utilization_rate = 0
 
     def reset(self):
         self.remain_task = 0
+        self.utilization_rate = 0
 
     def policy_action(self, tasks_num, upload_rates):
         """
@@ -164,35 +168,49 @@ class BaseStation(Entity):
             upload_rates: a list show the upload rates(bits/s) for each agents
         Returns:
             latency_list: a list for latency of each agents
+            drop_list: a list of variables used to indicate whether a task has been discarded
         """
         latency_list = []
+        drop_list = []
         agents_num = len(tasks_num)
         pre_remain_task = self.remain_task
         # the sum of arrived data size of all agents
         data_size_sum = sum(tasks_num) * self.service.branchy_model.input_data
+        # update utilization rate
+        self.utilization_rate = self.remain_task + data_size_sum * self.service.base_model_ci / (self.comp_ability * DURATION)
+        if self.utilization_rate > 1:
+            self.utilization_rate = 1
+
         for i in range(agents_num):
             # for agent i
             if tasks_num[i] == 0:
                 latency_list.append(0)
+                drop_list.append(0)
                 continue  # execute locally
             data_size = tasks_num[i] * self.service.branchy_model.input_data
             upload_time = data_size / upload_rates[i]
+            #print("bs: data_size: ", data_size, "upload_rates: ", upload_rates[i])
             execute_time = data_size * self.service.base_model_ci / self.comp_ability
             accumulate_queue_time = pre_remain_task / self.comp_ability
             cur_avg_wait_time = data_size_sum * self.service.base_model_ci / (2 * self.comp_ability)
             latency = upload_time + execute_time + accumulate_queue_time + cur_avg_wait_time
-            #print("bs: ", upload_time, execute_time, accumulate_queue_time, cur_avg_wait_time)
+            #print("bs: ", upload_time, execute_time, accumulate_queue_time, cur_avg_wait_time, latency)
             if latency > self.service.max_wait_time:
-                latency += DROP_PENALTY
+                drop_list.append(1)
+            else:
+                #print("bs not drop")
+                self.remain_task += data_size * self.service.base_model_ci
+                drop_list.append(0)
             latency_list.append(latency)
-        return latency_list
+        #print(self.name, "remain_task: ", self.remain_task)
+        return latency_list, drop_list
 
 
 class World:
-    def __init__(self, agents, bs: BaseStation, duration: int):
+    def __init__(self, agents, bs: BaseStation):
         self.agents = agents
         self.bs = bs
-        self.duration = duration
+        self.duration = DURATION
         # channel gains are divided to three type, Good:6*10^-13, Normal:4*10^-13, Bad:2*10^-13
         self.channel_gain = [6*pow(10, -13), 4*pow(10, -13), 2*pow(10, -13)]
         # channel gain translation matrix
@@ -201,8 +219,9 @@ class World:
         self.white_noise = pow(10, -13)
         # transmit power 20dBm=100mW=0.1W
         self.tran_power = 0.1
-        # bandwidth of subchannels MHz
-        self.bandwidth = 5 * math.pow(10, 6)
+        # bandwidth of subchannels (MHz), range from [5, 25]
+        self.min_bandwidth = 5
+        self.max_bandwidth = 5
 
     def step(self):
         """
@@ -210,32 +229,34 @@ class World:
         Returns: None
         """
         # get updated agents' info
+        self.update_trans_rate()  # update trans_rate based on agents who offload tasks to base station
         tasks_to_bs = []
-        update_rates = []
+        upload_rates = []
         for agent in self.agents:
             if agent.is_offloaded():
                 tasks_to_bs.append(agent.arrived_tasks)
+                upload_rates.append(agent.trans_rate)
             else:
                 tasks_to_bs.append(0)
-            update_rates.append(agent.trans_rate)
+                upload_rates.append(0)
         # update state of the world
         for agent in self.agents:
             agent.policy_action()
             # Execute tasks in agent's waiting queue
             agent.scripted_action(self.duration)
         # Execute tasks in base station's waiting queue
-        latency = self.bs.policy_action(tasks_to_bs, update_rates)
+        latency, drop_list = self.bs.policy_action(tasks_to_bs, upload_rates)
         self.bs.scripted_action(self.duration)
         # union info
-        assert len(latency) == len(self.agents)
+        assert len(latency) == len(self.agents) == len(drop_list)
         for i in range(len(latency)):
             self.agents[i].latency += latency[i]
+            self.agents[i].is_dropped += drop_list[i]
         self.update_agents_states()
 
     def update_agents_states(self):
         self.update_agents_tasks()
         self.update_channel_gain()
-        self.update_trans_rate()
 
     def update_agents_tasks(self):
         for agent in self.agents:
@@ -263,14 +284,17 @@ class World:
         # count the number of agents of different channel gain type
         counter = {0: 0, 1: 0, 2: 0}
         for agent in self.agents:
-            counter[agent.channel_gain_id] += 1
-        for agent in self.agents:
-            interference = 0  # interference of other agents that share the same channel
-            current_gain = self.channel_gain[agent.channel_gain_id]
-            for i in range(agent.channel_gain_id):
-                interference += self.tran_power * self.channel_gain[i] * counter[i]
-            SINR = self.tran_power * current_gain / (self.white_noise + interference)
-            agent.trans_rate =  self.shannon_equation(SINR)
+            if agent.is_offloaded():
+                counter[agent.channel_gain_id] += 1
+        for agent in self.agents: 
+            if agent.is_offloaded():
+                interference = 0  # interference of other agents that share the same channel
+                current_gain = self.channel_gain[agent.channel_gain_id]
+                for i in range(agent.channel_gain_id):
+                    interference += self.tran_power * self.channel_gain[i] * counter[i]
+                SINR = self.tran_power * current_gain / (self.white_noise + interference)
+                agent.trans_rate =  self.shannon_equation(SINR)
 
     def shannon_equation(self, SINR):
-        return self.bandwidth * math.log2(1 + SINR)
+        cur_bandwidth = random.uniform(0, 1) * (self.max_bandwidth - self.min_bandwidth) + self.min_bandwidth
+        return cur_bandwidth * pow(10, 6) * math.log2(1 + SINR)

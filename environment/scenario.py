@@ -2,11 +2,11 @@ import random
 import math
 import numpy as np
 from environment.core import World, BranchyModel, Service, Agent, BaseStation
-from environment.hyperParameters import RHO
+from environment.hyperParameters import RHO, DROP_PENALTY, ACCURACY_PENALTY
 
 # branchy DNN model info
-#[97, 124, 139, 165]
-COMP_INTENSITY = [150, 200, 250, 300]
+#COMP_INTENSITY = [97, 124, 139, 165]
+COMP_INTENSITY = [100, 150, 200, 250]
 ACC_TABLE = [0.59 , 0.68, 0.76, 0.78]
 INPUT_SIZE = 1.1 * math.pow(10, 6)
 # service info
@@ -15,12 +15,10 @@ ACC_LIMIT = 0.75
 # agent number in the world
 AGENT_NUMBER = 5
 # computation ability's bound for agents  0.1GHz-0.5GHz
-MAX_ABILITY = 0.1
-MIN_ABILITY = 0.3
+MAX_ABILITY = 0.2
+MIN_ABILITY = 0.1
 # base station's computation ability
 BS_ABILITY = 2*math.pow(10, 9)
-# world info
-TIME_SLOT_DURATION = 1
 
 
 def make_world():
@@ -38,7 +36,7 @@ def make_world():
     # create base station
     bs = BaseStation(BS_ABILITY, service)
     # create world
-    world = World(agents, bs, TIME_SLOT_DURATION)
+    world = World(agents, bs)
     # initialize world
     reset_world(world)
     return world
@@ -61,10 +59,15 @@ def reward(world: World, cur_time_slot: int):
         # normalize exe_efficiency in [0, 5]
         exe_efficiency = exe_efficiency / 5
         # QoE of current agent
-        #print("accuracy: ", avg_accuracy, "latency: ", agent.latency/5, "agent", agent.is_offloaded(), "remain_task: ", agent.remain_task)
-        qoe = agent.rho * avg_accuracy + (1 - agent.rho) * exe_efficiency
+        acc_penalty = 0
+        if agent.service.acc_limit > avg_accuracy:
+            acc_penalty = 1
+        qoe = agent.rho * avg_accuracy + (1 - agent.rho) * exe_efficiency - agent.is_dropped * DROP_PENALTY - acc_penalty * ACCURACY_PENALTY
+        #print("accuracy: ", avg_accuracy, "latency: ", agent.latency/5, "agent", agent.is_offloaded(), "remain_task: ", agent.remain_task, " qoe:", qoe, "drop penalty: ", agent.is_dropped * DROP_PENALTY, "acc penalty: ", acc_penalty * ACCURACY_PENALTY)
         qoe_list.append(qoe)
-    return sum(qoe_list)
+    rwd = sum(qoe_list) + world.bs.utilization_rate * len(agents)
+    #print("qoe list: ", qoe_list, "util: ", world.bs.utilization_rate)
+    return rwd
 
 
 def observation(agent: Agent, world: World):

@@ -115,6 +115,7 @@ def train(arglist):
                 agent_id += 1
             # environment step
             new_obs_n, rew_n, done_n, info_n = env.step(action_n)
+            print("new obs: ", new_obs_n)
             episode_step += 1
             done = all(done_n)
             terminal = (episode_step >= arglist.max_episode_len)
