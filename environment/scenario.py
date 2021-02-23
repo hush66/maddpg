@@ -73,6 +73,7 @@ def reward(world: World, cur_time_slot: int):
 def observation(agent: Agent, world: World):
     service = agent.service
     # arrived bit size
-    tasks_amount = agent.arrived_tasks * service.branchy_model.input_data
+    tasks_amount = agent.arrived_tasks * agent.service.branchy_model.input_data
     channel_gain = world.channel_gain[agent.channel_gain_id]
-    return np.array([agent.remain_task, world.bs.remain_task, tasks_amount, channel_gain])
+    # observation values are normalized to the same order of magnitude
+    return np.array([agent.remain_task / math.pow(10, 6), world.bs.remain_task / math.pow(10, 6), tasks_amount / math.pow(10, 6), channel_gain * math.pow(10, 13)])
