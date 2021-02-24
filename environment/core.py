@@ -62,7 +62,7 @@ class Entity:
 
 # IoT device
 class Agent(Entity):
-    def __init__(self, comp_ability: int, service: Service, task_lam=2, drop_penalty=DROP_PENALTY, rho=RHO):
+    def __init__(self, comp_ability: int, service: Service, task_lam=1, drop_penalty=DROP_PENALTY, rho=RHO):
         """
         initialize Agent class
         Args:
@@ -136,13 +136,15 @@ class Agent(Entity):
             self.acc_sum += accuracy
             # update task queue
             needed_cycles = comp_intensity * b_model.input_data  # needed cpu cycles for per task
-            for _ in range(self.arrived_tasks):
-                self.latency = (self.remain_task + needed_cycles) / self.comp_ability
+            latencys = [0 for _ in range(self.arrived_tasks)]
+            for i in range(self.arrived_tasks):
+                latencys[i] = (self.remain_task + needed_cycles) / self.comp_ability
                 # if arriving task's wait time is bigger than max wait time then drop it
-                if self.latency > self.service.max_wait_time:
-                    self.is_dropped = 1
+                if latencys[i] > self.service.max_wait_time:
+                    self.is_dropped += 1
                 else:
                     self.remain_task += needed_cycles
+            self.latency = sum(latencys) / self.arrived_tasks
         else:
             # offload to bs
             self.acc_sum += self.service.base_model_acc
@@ -171,38 +173,38 @@ class BaseStation(Entity):
             drop_list: a list of variables used to indicate whether a task has been discarded
         """
         latency_list = []
-        drop_list = []
         agents_num = len(tasks_num)
+        drop_list = [0 for _ in range(agents_num)]
         pre_remain_task = self.remain_task
         # the sum of arrived data size of all agents
-        data_size_sum = sum(tasks_num) * self.service.branchy_model.input_data
-        # update utilization rate
-        self.utilization_rate = self.remain_task + data_size_sum * self.service.base_model_ci / (self.comp_ability * DURATION)
-        if self.utilization_rate > 1:
-            self.utilization_rate = 1
+        input_data_size = self.service.branchy_model.input_data
+        data_size_sum = sum(tasks_num) * input_data_size
 
         for i in range(agents_num):
             # for agent i
             if tasks_num[i] == 0:
                 latency_list.append(0)
-                drop_list.append(0)
                 continue  # execute locally
-            data_size = tasks_num[i] * self.service.branchy_model.input_data
-            upload_time = data_size / upload_rates[i]
+            # The following latency calculation is for a single task, so there is an average operation
+            data_size = tasks_num[i] * input_data_size
+            avg_upload_time = data_size / (upload_rates[i] * 2)
             #print("bs: data_size: ", data_size, "upload_rates: ", upload_rates[i])
-            execute_time = data_size * self.service.base_model_ci / self.comp_ability
+            execute_time = input_data_size * self.service.base_model_ci / self.comp_ability  # for a single task
             accumulate_queue_time = pre_remain_task / self.comp_ability
-            cur_avg_wait_time = data_size_sum * self.service.base_model_ci / (2 * self.comp_ability)
-            latency = upload_time + execute_time + accumulate_queue_time + cur_avg_wait_time
-            #print("bs: ", upload_time, execute_time, accumulate_queue_time, cur_avg_wait_time, latency)
+            # average wait time among all newly arrived tasks till current agent's tasks are executed
+            cur_avg_wait_time = data_size_sum * self.service.base_model_ci / (2 * self.comp_ability) 
+            latency = avg_upload_time + execute_time + accumulate_queue_time + cur_avg_wait_time
+            #print("bs: ", avg_upload_time, execute_time, accumulate_queue_time, cur_avg_wait_time, latency)
             if latency > self.service.max_wait_time:
-                drop_list.append(1)
+                # TODO: Is the estimation of drop tasks number reasonable?
+                drop_list[i] += tasks_num[i] // 2
             else:
-                #print("bs not drop")
-                self.remain_task += data_size * self.service.base_model_ci
-                drop_list.append(0)
+                self.remain_task += data_size * self.service.base_model_ci 
             latency_list.append(latency)
         #print(self.name, "remain_task: ", self.remain_task)
+
+        # update utilization rate
+        self.utilization_rate = min( (self.remain_task - pre_remain_task) / (self.comp_ability * DURATION), 1 )
         return latency_list, drop_list
 
 
