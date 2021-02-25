@@ -17,9 +17,9 @@ def parse_args():
     parser.add_argument("--good-policy", type=str, default="maddpg", help="policy for good agents")
     parser.add_argument("--adv-policy", type=str, default="maddpg", help="policy of adversaries")
     # Core training parameters
-    parser.add_argument("--lr", type=float, default=1e-2, help="learning rate for Adam optimizer")
+    parser.add_argument("--lr", type=float, default=1e-3, help="learning rate for Adam optimizer")
     parser.add_argument("--gamma", type=float, default=0.95, help="discount factor")
-    parser.add_argument("--batch-size", type=int, default=256, help="number of episodes to optimize at the same time")
+    parser.add_argument("--batch-size", type=int, default=128, help="number of episodes to optimize at the same time")
     parser.add_argument("--num-units", type=int, default=64, help="number of units in the mlp")
     # Checkpointing
     parser.add_argument("--exp-name", type=str, default=None, help="name of the experiment")
@@ -73,7 +73,7 @@ def get_trainers(env, num_adversaries, obs_shape_n, arglist):
 
 
 def train(arglist):
-    with U.single_threaded_session():
+    with U.make_session(4):
         # Create environment
         env = make_env(arglist, arglist.benchmark)
         # Create agent trainers

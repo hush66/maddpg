@@ -1,4 +1,5 @@
 import gym
+import time
 import numpy as np
 import tensorflow as tf
 from gym import spaces
@@ -26,7 +27,7 @@ class MultiAgentEnv(gym.Env):
             # action space
             self.action_space.append(spaces.Discrete(agent.service.branchy_model.branches_num + 1))
             # observation space
-            obs_dim = len(observation_func(agent, self.world))
+            obs_dim = len(observation_func(agent, self.world, self.time_slot))
             self.observation_space.append(spaces.Box(low=-np.inf, high=+np.inf, shape=(obs_dim, ), dtype=np.float32))
 
     def step(self, action_n):
@@ -35,12 +36,13 @@ class MultiAgentEnv(gym.Env):
         info_n = {'n': []}
         # set action for each agent
         for i, agent in enumerate(self.agents):
-            agent.action = tf.argmax(action_n[i])
+            action_list = action_n[i].tolist()
+            agent.action = action_list.index(max(action_list))
         # update world state
         self.world.step()
         # record observation for each agent
         for agent in self.agents:
-            obs_n.append(self._get_obs(agent))
+            obs_n.append(self._get_obs(agent, self.time_slot))
             info_n['n'].append(self._get_info(agent))
             done_n.append(self._get_done(agent))
         # get reward
@@ -52,7 +54,7 @@ class MultiAgentEnv(gym.Env):
     def reset(self):
         for agent in self.agents:
             if agent.action is not None:
-                print(agent.name, " latency: ", agent.latency, " action: ", agent.action.eval(), " accuracy: ", agent.acc_sum/self.time_slot, " remain_task: ", agent.remain_task)
+                print(agent.name, " latency: ", agent.latency, " action: ", agent.action, " accuracy: ", agent.acc_sum/self.time_slot, " remain_task: ", agent.remain_task)
         print("base station: ", self.world.bs.remain_task, "util_rate: ", self.world.bs.utilization_rate)
         self.time_slot = 0
         # reset world
@@ -60,13 +62,13 @@ class MultiAgentEnv(gym.Env):
         # record initial observations for each agent
         obs_n = []
         for agent in self.agents:
-            obs_n.append(self._get_obs(agent))
+            obs_n.append(self._get_obs(agent, self.time_slot))
         return obs_n
 
-    def _get_obs(self, agent):
+    def _get_obs(self, agent, time_slot):
         if self.observation_func is None:
             raise np.zeros(0)
-        return self.observation_func(agent, self.world)
+        return self.observation_func(agent, self.world, self.time_slot)
 
     def _get_reward(self):
         if self.reward_func is None:

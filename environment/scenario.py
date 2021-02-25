@@ -13,7 +13,7 @@ INPUT_SIZE = 1.1 * math.pow(10, 6)
 MAX_WAIT_TIME = 1.5
 ACC_LIMIT = 0.75
 # agent number in the world
-AGENT_NUMBER = 5
+AGENT_NUMBER = 15
 # computation ability's bound for agents  0.1GHz-0.5GHz
 MAX_ABILITY = 0.2
 MIN_ABILITY = 0.1
@@ -70,10 +70,12 @@ def reward(world: World, cur_time_slot: int):
     return rwd
 
 
-def observation(agent: Agent, world: World):
+def observation(agent: Agent, world: World, time_slot: int):
     service = agent.service
     # arrived bit size
     tasks_amount = agent.arrived_tasks * agent.service.branchy_model.input_data
     channel_gain = world.channel_gain[agent.channel_gain_id]
     # observation values are normalized to the same order of magnitude
-    return np.array([agent.remain_task / math.pow(10, 6), world.bs.remain_task / math.pow(10, 6), tasks_amount / math.pow(10, 6), channel_gain * math.pow(10, 13)])
+    if time_slot == 0:
+        return np.array([agent.remain_task / math.pow(10, 6), world.bs.remain_task / math.pow(10, 6), tasks_amount / math.pow(10, 6), channel_gain * math.pow(10, 13), 0])
+    return np.array([agent.remain_task / math.pow(10, 6), world.bs.remain_task / math.pow(10, 6), tasks_amount / math.pow(10, 6), channel_gain * math.pow(10, 13), agent.acc_sum / (time_slot+1) * 100])

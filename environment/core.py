@@ -1,5 +1,6 @@
 import random
 import math
+import time
 import numpy as np
 import tensorflow as tf
 
@@ -31,7 +32,7 @@ class Service:
         self.base_model_ci = branchy_model.comp_intensities[-1]  # computation intensity for main branch
         self.acc_limit = accuracy_limit
 
-
+ 
 class Entity:
     def __init__(self, comp_ability: int, service: Service):
         """
@@ -118,7 +119,7 @@ class Agent(Entity):
         Returns: a boolean var that indicates whether agent offload task to base station
         """
         b_model = self.service.branchy_model
-        return self.action.eval() == b_model.branches_num
+        return self.action == b_model.branches_num
 
     def policy_action(self):
         """
@@ -129,7 +130,7 @@ class Agent(Entity):
         self.latency, self.is_dropped = 0, 0
         if not self.is_offloaded():
             # execute locally
-            branch_id = self.action.eval()  # action indicates the chosen branch id
+            branch_id = self.action  # action indicates the chosen branch id
             comp_intensity = b_model.comp_intensities[branch_id]  # chosen branch's computation intensity
             accuracy = b_model.accuracy[branch_id]  # chosen branch's accuracy
             # update acc_sum
@@ -232,8 +233,10 @@ class World:
         """
         # get updated agents' info
         self.update_trans_rate()  # update trans_rate based on agents who offload tasks to base station
+
         tasks_to_bs = []
         upload_rates = []
+
         for agent in self.agents:
             if agent.is_offloaded():
                 tasks_to_bs.append(agent.arrived_tasks)
@@ -241,11 +244,13 @@ class World:
             else:
                 tasks_to_bs.append(0)
                 upload_rates.append(0)
+
         # update state of the world
         for agent in self.agents:
             agent.policy_action()
             # Execute tasks in agent's waiting queue
             agent.scripted_action(self.duration)
+
         # Execute tasks in base station's waiting queue
         latency, drop_list = self.bs.policy_action(tasks_to_bs, upload_rates)
         self.bs.scripted_action(self.duration)
@@ -288,6 +293,7 @@ class World:
         for agent in self.agents:
             if agent.is_offloaded():
                 counter[agent.channel_gain_id] += 1
+
         for agent in self.agents: 
             if agent.is_offloaded():
                 interference = 0  # interference of other agents that share the same channel
