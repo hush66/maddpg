@@ -1,25 +1,27 @@
 import argparse
+import os
 import numpy as np
 import tensorflow as tf
 import time
 import pickle
 
 import maddpg.common.tf_util as U
+from maddpg.common.csv_logger import CSVLogger
 from maddpg.trainer.maddpg import MADDPGAgentTrainer
 import tensorflow.contrib.layers as layers
 
 def parse_args():
     parser = argparse.ArgumentParser("Reinforcement Learning experiments for multiagent environments")
     # Environment
-    parser.add_argument("--max-episode-len", type=int, default=30, help="maximum episode length")
-    parser.add_argument("--num-episodes", type=int, default=1000, help="number of episodes")
+    parser.add_argument("--max-episode-len", type=int, default=50, help="maximum episode length")
+    parser.add_argument("--num-episodes", type=int, default=600, help="number of episodes")
     parser.add_argument("--num-adversaries", type=int, default=0, help="number of adversaries")
     parser.add_argument("--good-policy", type=str, default="maddpg", help="policy for good agents")
     parser.add_argument("--adv-policy", type=str, default="maddpg", help="policy of adversaries")
     # Core training parameters
-    parser.add_argument("--lr", type=float, default=1e-3, help="learning rate for Adam optimizer")
+    parser.add_argument("--lr", type=float, default=1e-4, help="learning rate for Adam optimizer")
     parser.add_argument("--gamma", type=float, default=0.95, help="discount factor")
-    parser.add_argument("--batch-size", type=int, default=128, help="number of episodes to optimize at the same time")
+    parser.add_argument("--batch-size", type=int, default=256, help="number of episodes to optimize at the same time")
     parser.add_argument("--num-units", type=int, default=64, help="number of units in the mlp")
     # Checkpointing
     parser.add_argument("--exp-name", type=str, default=None, help="name of the experiment")
@@ -28,7 +30,6 @@ def parse_args():
     parser.add_argument("--load-dir", type=str, default="", help="directory in which training state and model are loaded")
     # Evaluation
     parser.add_argument("--restore", action="store_true", default=False)
-    parser.add_argument("--display", action="store_true", default=False)
     parser.add_argument("--benchmark", action="store_true", default=False)
     parser.add_argument("--benchmark-iters", type=int, default=100000, help="number of iterations run for benchmarking")
     parser.add_argument("--benchmark-dir", type=str, default="./benchmark_files/", help="directory where benchmark data is saved")
@@ -54,7 +55,7 @@ def make_env(arglist, benchmark=False):
     if benchmark:
         env = MultiAgentEnv(world, scenario.reset_world, scenario.reward, scenario.observation, scenario.benchmark_data)
     else:
-        env = MultiAgentEnv(world, scenario.reset_world, scenario.reward, scenario.observation)
+        env = MultiAgentEnv(world, scenario.reset_world, scenario.reward, scenario.observation, scenario.information)
     return env
 
 def get_trainers(env, num_adversaries, obs_shape_n, arglist):
@@ -88,19 +89,19 @@ def train(arglist):
         # Load previous results, if necessary
         if arglist.load_dir == "":
             arglist.load_dir = arglist.save_dir
-        if arglist.display or arglist.restore or arglist.benchmark:
+        if arglist.restore or arglist.benchmark:
             print('Loading previous state...')
             U.load_state(arglist.load_dir)
 
-        episode_rewards = [0.0]  # sum of rewards for all agents
-        agent_rewards = [[0.0] for _ in range(env.n)]  # individual agent reward
+        episode_rewards = [0.0]  # sum of reward for episodes
+        cur_cum_latency = [0.0 for _ in range(env.n)]  #  cumulative latency of current episode for different agents
         final_ep_rewards = []  # sum of rewards for training curve
-        final_ep_ag_rewards = []  # agent rewards for training curve
         agent_info = [[[]]]  # placeholder for benchmarking info
         saver = tf.train.Saver()
         obs_n = env.reset()
         episode_step = 0
         train_step = 0
+        csv_logger = [CSVLogger(agent.name+"_result.csv") for agent in env.agents]
         t_start = time.time()
 
         print('Starting iterations...')
@@ -119,22 +120,27 @@ def train(arglist):
             episode_step += 1
             done = all(done_n)
             terminal = (episode_step >= arglist.max_episode_len)
-            # collect experience
+            # collect experience and log
             for i, agent in enumerate(trainers):
                 agent.experience(obs_n[i], action_n[i], rew_n[i], new_obs_n[i], done_n[i], terminal)
+                cur_cum_latency[i] += info_n[i]  # accumulated latency value is used for getting average latency
             obs_n = new_obs_n
 
-            for i, rew in enumerate(rew_n):
-                episode_rewards[-1] += rew
-                agent_rewards[i][-1] += rew
+            episode_rewards[-1] += rew_n[0]  # add reward of current step, since the reward of all users is consistent, take rew_n[0] is ok
+            """ for i, rew in enumerate(rew_n):
+                episode_rewards[-1] += rew """
 
             if done or terminal:
                 print("episode %d: " %len(episode_rewards), rew_n)
+
+                # log to csv
+                for i in range(env.n):
+                    csv_logger[i].log_dict({"agent id": i, "episode": len(episode_rewards), "reward": episode_rewards[-1], "average latency": cur_cum_latency[i]/episode_step, "average accuracy": new_obs_n[i][4], "base station util rate": env.world.bs.utilization_rate})
+
                 obs_n = env.reset()
+                cur_cum_latency = [0.0 for _ in range(env.n)]
                 episode_step = 0
                 episode_rewards.append(0)
-                for a in agent_rewards:
-                    a.append(0)
                 agent_info.append([[]])
 
             # increment global step counter
@@ -152,12 +158,6 @@ def train(arglist):
                     break
                 continue
 
-            # for displaying learned policies
-            if arglist.display:
-                time.sleep(0.1)
-                env.render()
-                continue
-
             # update all trainers, if not in display or benchmark mode
             loss = None
             for agent in trainers:
@@ -167,30 +167,27 @@ def train(arglist):
 
             # save model, display training output
             if terminal and (len(episode_rewards) % arglist.save_rate == 0):
+                for logger in csv_logger:
+                    logger.flush()
                 U.save_state(arglist.save_dir, saver=saver)
                 # print statement depends on whether or not there are adversaries
-                if num_adversaries == 0:
-                    print("steps: {}, episodes: {}, mean episode reward: {}, time: {}".format(
-                        train_step, len(episode_rewards), np.mean(episode_rewards[-arglist.save_rate:]), round(time.time()-t_start, 3)))
-                else:
-                    print("steps: {}, episodes: {}, mean episode reward: {}, agent episode reward: {}, time: {}".format(
-                        train_step, len(episode_rewards), np.mean(episode_rewards[-arglist.save_rate:]),
-                        [np.mean(rew[-arglist.save_rate:]) for rew in agent_rewards], round(time.time()-t_start, 3)))
+                print("steps: {}, episodes: {}, mean episode reward: {}, time: {}".format(
+                    train_step, len(episode_rewards), np.mean(episode_rewards[-arglist.save_rate:]), round(time.time()-t_start, 3)))
                 t_start = time.time()
                 # Keep track of final episode reward
                 final_ep_rewards.append(np.mean(episode_rewards[-arglist.save_rate:]))
-                for rew in agent_rewards:
-                    final_ep_ag_rewards.append(np.mean(rew[-arglist.save_rate:]))
 
+            # TODO:
             # saves final episode reward for plotting training curve later
             if len(episode_rewards) > arglist.num_episodes:
-                rew_file_name = arglist.plots_dir + arglist.exp_name + '_rewards.pkl'
+                """ rew_file_name = os.path.join('summary', 'rewards.pkl')
                 with open(rew_file_name, 'wb') as fp:
                     pickle.dump(final_ep_rewards, fp)
-                agrew_file_name = arglist.plots_dir + arglist.exp_name + '_agrewards.pkl'
-                with open(agrew_file_name, 'wb') as fp:
-                    pickle.dump(final_ep_ag_rewards, fp)
-                print('...Finished total of {} episodes.'.format(len(episode_rewards)))
+                print('...Finished total of {} episodes.'.format(len(episode_rewards))) """
+
+                # close csv file
+                for logger in csv_logger:
+                    logger.close()
                 break
 
 if __name__ == '__main__':

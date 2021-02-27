@@ -33,7 +33,7 @@ class MultiAgentEnv(gym.Env):
     def step(self, action_n):
         obs_n = []
         done_n = []
-        info_n = {'n': []}
+        info_n = []
         # set action for each agent
         for i, agent in enumerate(self.agents):
             action_list = action_n[i].tolist()
@@ -43,7 +43,7 @@ class MultiAgentEnv(gym.Env):
         # record observation for each agent
         for agent in self.agents:
             obs_n.append(self._get_obs(agent, self.time_slot))
-            info_n['n'].append(self._get_info(agent))
+            info_n.append(self._get_info(agent))
             done_n.append(self._get_done(agent))
         # get reward
         reward = self._get_reward()

@@ -13,7 +13,7 @@ INPUT_SIZE = 1.1 * math.pow(10, 6)
 MAX_WAIT_TIME = 1.5
 ACC_LIMIT = 0.75
 # agent number in the world
-AGENT_NUMBER = 15
+AGENT_NUMBER = 20
 # computation ability's bound for agents  0.1GHz-0.5GHz
 MAX_ABILITY = 0.2
 MIN_ABILITY = 0.1
@@ -79,3 +79,6 @@ def observation(agent: Agent, world: World, time_slot: int):
     if time_slot == 0:
         return np.array([agent.remain_task / math.pow(10, 6), world.bs.remain_task / math.pow(10, 6), tasks_amount / math.pow(10, 6), channel_gain * math.pow(10, 13), 0])
     return np.array([agent.remain_task / math.pow(10, 6), world.bs.remain_task / math.pow(10, 6), tasks_amount / math.pow(10, 6), channel_gain * math.pow(10, 13), agent.acc_sum / (time_slot+1) * 100])
+
+def information(agent: Agent):
+    return agent.latency
