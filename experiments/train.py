@@ -14,7 +14,7 @@ def parse_args():
     parser = argparse.ArgumentParser("Reinforcement Learning experiments for multiagent environments")
     # Environment
     parser.add_argument("--max-episode-len", type=int, default=50, help="maximum episode length")
-    parser.add_argument("--num-episodes", type=int, default=600, help="number of episodes")
+    parser.add_argument("--num-episodes", type=int, default=800, help="number of episodes")
     parser.add_argument("--num-adversaries", type=int, default=0, help="number of adversaries")
     parser.add_argument("--good-policy", type=str, default="maddpg", help="policy for good agents")
     parser.add_argument("--adv-policy", type=str, default="maddpg", help="policy of adversaries")
@@ -95,6 +95,7 @@ def train(arglist):
 
         episode_rewards = [0.0]  # sum of reward for episodes
         cur_cum_latency = [0.0 for _ in range(env.n)]  #  cumulative latency of current episode for different agents
+        cur_cum_qoe = [0.0 for _ in range(env.n)]  #  cumulative qoe of current episode for different agents
         final_ep_rewards = []  # sum of rewards for training curve
         agent_info = [[[]]]  # placeholder for benchmarking info
         saver = tf.train.Saver()
@@ -109,14 +110,8 @@ def train(arglist):
             # get action
             action_n = [agent.action(obs) for agent, obs in zip(trainers,obs_n)]
             #print("action_n: ", action_n)
-            """ agent_id = 1
-            for agent, obs in zip(trainers,obs_n):
-                print(agent_id, " obs: ", obs[None])
-                print(agent_id, " p_values: ", agent.p_debug['p_values'](obs[None]))
-                agent_id += 1 """
             # environment step
-            new_obs_n, rew_n, done_n, info_n = env.step(action_n)
-            #print("new obs: ", new_obs_n)
+            new_obs_n, rew_n, done_n, info_n, qoe_n = env.step(action_n)
             episode_step += 1
             done = all(done_n)
             terminal = (episode_step >= arglist.max_episode_len)
@@ -127,18 +122,19 @@ def train(arglist):
             obs_n = new_obs_n
 
             episode_rewards[-1] += rew_n[0]  # add reward of current step, since the reward of all users is consistent, take rew_n[0] is ok
-            """ for i, rew in enumerate(rew_n):
-                episode_rewards[-1] += rew """
+            for i, qoe in enumerate(qoe_n):
+                cur_cum_qoe[i] += qoe
 
             if done or terminal:
                 print("episode %d: " %len(episode_rewards), rew_n)
 
                 # log to csv
                 for i in range(env.n):
-                    csv_logger[i].log_dict({"agent id": i, "episode": len(episode_rewards), "reward": episode_rewards[-1], "average latency": cur_cum_latency[i]/episode_step, "average accuracy": new_obs_n[i][4], "base station util rate": env.world.bs.utilization_rate})
+                    csv_logger[i].log_dict({"agent id": i, "episode": len(episode_rewards), "reward": episode_rewards[-1], "average latency": cur_cum_latency[i]/episode_step, "average accuracy": new_obs_n[i][4], "base station util rate": env.world.bs.cum_utilization_rate/episode_step, "qoe": cur_cum_qoe[i]})
 
                 obs_n = env.reset()
                 cur_cum_latency = [0.0 for _ in range(env.n)]
+                cur_cum_qoe = [0.0 for _ in range(env.n)]
                 episode_step = 0
                 episode_rewards.append(0)
                 agent_info.append([[]])

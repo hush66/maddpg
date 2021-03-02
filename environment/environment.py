@@ -40,32 +40,31 @@ class MultiAgentEnv(gym.Env):
             agent.action = action_list.index(max(action_list))
         # update world state
         self.world.step()
+        self.time_slot += 1
         # record observation for each agent
         for agent in self.agents:
-            obs_n.append(self._get_obs(agent, self.time_slot))
+            obs_n.append(self._get_obs(agent))
             info_n.append(self._get_info(agent))
             done_n.append(self._get_done(agent))
         # get reward
-        reward = self._get_reward()
+        reward, qoe_list = self._get_reward()
         reward_n = [reward] * self.n  # all agents get total reward in cooperative case
-        self.time_slot += 1
-        return obs_n, reward_n, done_n, info_n
+        return obs_n, reward_n, done_n, info_n, qoe_list
 
     def reset(self):
         for agent in self.agents:
             if agent.action is not None:
                 print(agent.name, " latency: ", agent.latency, " action: ", agent.action, " accuracy: ", agent.acc_sum/self.time_slot, " remain_task: ", agent.remain_task)
-        print("base station: ", self.world.bs.remain_task, "util_rate: ", self.world.bs.utilization_rate)
         self.time_slot = 0
         # reset world
         self.reset_func(self.world)
         # record initial observations for each agent
         obs_n = []
         for agent in self.agents:
-            obs_n.append(self._get_obs(agent, self.time_slot))
+            obs_n.append(self._get_obs(agent))
         return obs_n
 
-    def _get_obs(self, agent, time_slot):
+    def _get_obs(self, agent):
         if self.observation_func is None:
             raise np.zeros(0)
         return self.observation_func(agent, self.world, self.time_slot)

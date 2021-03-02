@@ -51,7 +51,25 @@ def reset_world(world: World):
 
 
 def reward(world: World, cur_time_slot: int):
-    agents = world.agents
+    """ agents = world.agents
+    qoe_list = []
+    for agent in agents:
+        avg_accuracy = agent.acc_sum / (cur_time_slot + 1)
+        exe_efficiency = agent.arrived_tasks / agent.latency
+        # normalize exe_efficiency in [0, 5]
+        #exe_efficiency = exe_efficiency / 5
+        # QoE of current agent
+        #qoe = agent.rho * (avg_accuracy - agent.service.acc_limit ) + (1 - agent.rho) * exe_efficiency - agent.is_dropped * DROP_PENALTY
+        acc_gain = avg_accuracy - agent.service.acc_limit  # in range [-0.2, 0.1]
+        latency_gain = agent.service.max_wait_time - agent.latency  # in range [-1.5, 1.5]
+        qoe = agent.rho * (acc_gain / 0.3 + 2/3) + (1 - agent.rho) * (latency_gain / 3 + 0.5)
+        #print("acc gain: ", acc_gain / 0.3 +2/3, "latency gain: ", latency_gain / 3 + 0.5)
+        #print("acc gain: ", (1-math.exp(-acc_gain))/(2+2*math.exp(-acc_gain)), "latency gain: ", (1-math.exp(-latency_gain))/(2+2*math.exp(-latency_gain)))
+        qoe_list.append(qoe)
+    rwd = sum(qoe_list) + world.bs.utilization_rate * len(agents)
+    return rwd """
+
+    """ agents = world.agents
     qoe_list = []
     for agent in agents:
         avg_accuracy = agent.acc_sum / (cur_time_slot + 1)
@@ -67,7 +85,19 @@ def reward(world: World, cur_time_slot: int):
         qoe_list.append(qoe)
     rwd = sum(qoe_list) + world.bs.utilization_rate * len(agents)
     #print("qoe list: ", qoe_list, "util: ", world.bs.utilization_rate)
-    return rwd
+    return rwd """
+
+    agents = world.agents
+    qoe_list = []
+    for agent in agents:
+        avg_accuracy = agent.acc_sum / cur_time_slot
+        acc_gain = avg_accuracy - agent.service.acc_limit  # in range [-0.2, 0.1]
+        # QoE of current agent
+        qoe = agent.rho * (acc_gain / 0.3 + 2/3) + (1 - agent.rho) * agent.latency/3.5 - agent.is_dropped * DROP_PENALTY
+        #print("acc gain:", (acc_gain / 0.3 + 2/3), "latency: ", agent.latency/3.5)
+        qoe_list.append(qoe)
+    rwd = sum(qoe_list) + world.bs.cum_utilization_rate / cur_time_slot * len(agents)
+    return rwd, qoe_list
 
 
 def observation(agent: Agent, world: World, time_slot: int):

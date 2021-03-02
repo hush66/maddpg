@@ -92,8 +92,10 @@ class Agent(Entity):
         self.drop_penalty = drop_penalty
         # adjust the importance of accuracy
         self.rho = rho
-        # variable to indicate whether any tasks are dropped during execution
+        # variable to indicate the number of consecutive discarded tasks 
         self.is_dropped = 0
+        # variable to indicate the number of tasks whose accuracy is lower than accuracy limit
+        self.low_acc_num = 0
 
     def reset(self):
         self.channel_gain_id = 1
@@ -138,18 +140,22 @@ class Agent(Entity):
             # update task queue
             needed_cycles = comp_intensity * b_model.input_data  # needed cpu cycles for per task
             latencys = [0 for _ in range(self.arrived_tasks)]
+
+            dropped_num = 0
             for i in range(self.arrived_tasks):
                 latencys[i] = (self.remain_task + needed_cycles) / self.comp_ability
                 # if arriving task's wait time is bigger than max wait time then drop it
                 if latencys[i] > self.service.max_wait_time:
-                    self.is_dropped += 1
+                    dropped_num += 1
                 else:
                     self.remain_task += needed_cycles
+            if dropped_num == 0:
+                self.is_dropped = 0
+            else: self.is_dropped += dropped_num
             self.latency = sum(latencys) / self.arrived_tasks
         else:
             # offload to bs
             self.acc_sum += self.service.base_model_acc
-        #print(self.name, "remain_task: ", self.remain_task)
 
 
 # 5G base station
@@ -161,7 +167,7 @@ class BaseStation(Entity):
 
     def reset(self):
         self.remain_task = 0
-        self.utilization_rate = 0
+        self.cum_utilization_rate = 0  # cumulate utilization rate for the computation of average util rate
 
     def policy_action(self, tasks_num, upload_rates):
         """
@@ -189,23 +195,20 @@ class BaseStation(Entity):
             # The following latency calculation is for a single task, so there is an average operation
             data_size = tasks_num[i] * input_data_size
             avg_upload_time = data_size / (upload_rates[i] * 2)
-            #print("bs: data_size: ", data_size, "upload_rates: ", upload_rates[i])
             execute_time = input_data_size * self.service.base_model_ci / self.comp_ability  # for a single task
             accumulate_queue_time = pre_remain_task / self.comp_ability
             # average wait time among all newly arrived tasks till current agent's tasks are executed
             cur_avg_wait_time = data_size_sum * self.service.base_model_ci / (2 * self.comp_ability) 
             latency = avg_upload_time + execute_time + accumulate_queue_time + cur_avg_wait_time
-            #print("bs: ", avg_upload_time, execute_time, accumulate_queue_time, cur_avg_wait_time, latency)
             if latency > self.service.max_wait_time:
                 # TODO: Is the estimation of drop tasks number reasonable?
                 drop_list[i] += tasks_num[i] // 2
             else:
                 self.remain_task += data_size * self.service.base_model_ci 
             latency_list.append(latency)
-        #print(self.name, "remain_task: ", self.remain_task)
 
         # update utilization rate
-        self.utilization_rate = min( (self.remain_task - pre_remain_task) / (self.comp_ability * DURATION), 1 )
+        self.cum_utilization_rate += min( (self.remain_task - pre_remain_task) / (self.comp_ability * DURATION), 1 )
         return latency_list, drop_list
 
 
@@ -257,8 +260,12 @@ class World:
         # union info
         assert len(latency) == len(self.agents) == len(drop_list)
         for i in range(len(latency)):
-            self.agents[i].latency += latency[i]
-            self.agents[i].is_dropped += drop_list[i]
+            if self.agents[i].is_offloaded():
+                self.agents[i].latency += latency[i]
+                if drop_list[i] == 0:
+                    self.agents[i].is_dropped = 0
+                else:
+                    self.agents[i].is_dropped += drop_list[i]
         self.update_agents_states()
 
     def update_agents_states(self):
