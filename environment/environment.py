@@ -11,6 +11,8 @@ class MultiAgentEnv(gym.Env):
         self.agents = world.agents
         # set required vectorized gym env property
         self.n = len(self.agents)
+        # Number of optional actions TODO: Assume that the number of optional actions for all services is equal currently
+        self.action_number = self.agents[0].service.branchy_model.branches_num + 1
         # scenario functions
         self.reset_func = reset_func
         self.reward_func = reward_func
