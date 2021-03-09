@@ -8,6 +8,7 @@ import pickle
 import maddpg.common.tf_util as U
 from maddpg.common.csv_logger import CSVLogger
 from maddpg.trainer.maddpg import MADDPGAgentTrainer
+from maddpg.trainer.coma import COMAAgentTrainer
 import tensorflow.contrib.layers as layers
 
 def parse_args():
@@ -18,6 +19,7 @@ def parse_args():
     parser.add_argument("--num-adversaries", type=int, default=0, help="number of adversaries")
     parser.add_argument("--good-policy", type=str, default="maddpg", help="policy for good agents")
     parser.add_argument("--adv-policy", type=str, default="maddpg", help="policy of adversaries")
+    parser.add_argument("--coma", type=bool, default=False, help="use coma algorithm or not")
     # Core training parameters
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate for Adam optimizer")
     parser.add_argument("--gamma", type=float, default=0.95, help="discount factor")
@@ -35,6 +37,7 @@ def parse_args():
     parser.add_argument("--benchmark-dir", type=str, default="./benchmark_files/", help="directory where benchmark data is saved")
     parser.add_argument("--plots-dir", type=str, default="./learning_curves/", help="directory where plot data is saved")
     return parser.parse_args()
+
 
 def mlp_model(input, num_outputs, scope, reuse=False, num_units=64, rnn_cell=None):
     # This model takes as input an observation and returns values of all actions
@@ -59,18 +62,20 @@ def make_env(arglist, benchmark=False):
         env = MultiAgentEnv(world, scenario.reset_world, scenario.reward, scenario.observation, scenario.information)
     return env
 
-def get_trainers(env, num_adversaries, obs_shape_n, arglist):
+def get_trainers(env, obs_shape_n, action_number, arglist):
     trainers = []
     model = mlp_model
-    trainer = MADDPGAgentTrainer
-    for i in range(num_adversaries):
-        trainers.append(trainer(
-            "agent_%d" % i, model, obs_shape_n, env.action_space, i, arglist,
-            local_q_func=(arglist.adv_policy=='ddpg')))
-    for i in range(num_adversaries, env.n):
-        trainers.append(trainer(
-            "agent_%d" % i, model, obs_shape_n, env.action_space, i, arglist,
-            local_q_func=(arglist.good_policy=='ddpg')))
+    if arglist.coma:
+        trainer = COMAAgentTrainer
+        for i in range(env.n):
+            trainers.append(trainer(
+                "agent_%d" % i, model, obs_shape_n, env.action_space, i, action_number, arglist))
+    else:
+        trainer = MADDPGAgentTrainer
+        for i in range(env.n):
+            trainers.append(trainer(
+                "agent_%d" % i, model, obs_shape_n, env.action_space, i, arglist,
+                local_q_func=(arglist.good_policy=='ddpg')))
     return trainers
 
 
@@ -81,7 +86,7 @@ def train(arglist):
         # Create agent trainers
         obs_shape_n = [env.observation_space[i].shape for i in range(env.n)]
         num_adversaries = min(env.n, arglist.num_adversaries)
-        trainers = get_trainers(env, num_adversaries, obs_shape_n, arglist)
+        trainers = get_trainers(env, obs_shape_n, env.action_number, arglist)
         print('Using good policy {} and adv policy {}'.format(arglist.good_policy, arglist.adv_policy))
 
         # Initialize

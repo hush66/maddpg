@@ -27,7 +27,7 @@ class MultiAgentEnv(gym.Env):
         self.observation_space = []
         for agent in self.agents:
             # action space
-            self.action_space.append(spaces.Discrete(agent.service.branchy_model.branches_num + 1))
+            self.action_space.append(spaces.Discrete(self.action_number))
             # observation space
             obs_dim = len(observation_func(agent, self.world, self.time_slot))
             self.observation_space.append(spaces.Box(low=-np.inf, high=+np.inf, shape=(obs_dim, ), dtype=np.float32))
